@@ -1,0 +1,85 @@
+//@version=5
+strategy('ボリンジャーバンド 調整局面後購入', overlay=true, max_labels_count=200)
+
+// ボリンジャーバンドのパラメーター
+length = input.int(40, minval=1)
+mult = input.float(2.0, minval=0.001, maxval=50)
+
+// 移動平均線のパラメーター
+ma_length = input.int(20, minval=1)
+
+// ストップロスのパラメーター
+stop_loss_pct = input.int(8, minval=0, maxval=100)
+
+// 購入条件のパラメーター
+buy_adjustment_pct = input.float(0.25, minval=0.1, maxval=10)
+buy_adjustment_days = input.int(5, minval=1, maxval=30)
+
+// ボリンジャーバンドを計算
+basis = ta.sma(close, length)
+dev = mult * ta.stdev(close, length)
+upper = basis + dev
+lower = basis - dev
+
+// 変数の初期化
+var globalState = array.new_int(2, 0)
+
+getBuySignal() => 
+    array.get(globalState, 0) == true
+
+setBuySignal(flag) =>
+    array.set(globalState, 0, flag == false ? 0 : 1)
+
+getBuyAdjustmentCounter() =>
+    array.get(globalState, 1)
+
+setBuyAdjustmentCounter(num) =>
+    array.set(globalState, 1, num)
+
+incrementBuyAdjustmentCounter() =>
+    setBuyAdjustmentCounter(getBuyAdjustmentCounter() + 1)
+
+reset() =>
+    setBuySignal(false)
+    setBuyAdjustmentCounter(0)
+
+plotchar(getBuyAdjustmentCounter(), "adjustmentCounter", location=location.top)
+
+// -2σに到達したら買い注文を出す
+if close <= lower
+    reset()
+    incrementBuyAdjustmentCounter()
+    setBuySignal(true)
+
+float magnification = float(1 - float(close)/float(close[1]))
+
+plotchar(close, "close", location=location.top)
+plotchar(close[1], "close[1]", location=location.top)
+plotchar(getBuySignal(), "getbuySignal", location=location.top)
+bgcolor(getBuySignal() ? color.red : na, transp=50)
+
+if getBuySignal() and (magnification < buy_adjustment_pct)
+    label.new(bar_index, high, str.tostring(getBuyAdjustmentCounter()))
+    incrementBuyAdjustmentCounter()
+else
+    reset()
+
+if getBuySignal() and (getBuyAdjustmentCounter() >= buy_adjustment_days)
+    reset()
+    strategy.entry('Buy', strategy.long)
+
+// エグジット条件
+sell_signal = ta.crossunder(ta.sma(close, 20), ta.ema(close, 60))
+// デッドクロスで売り注文を出す
+if sell_signal
+    strategy.close("Buy")
+
+// ストップロス - 株価が`stop_loss_pct`%に達したら売り注文を出す
+if close <= strategy.position_avg_price * (1 - stop_loss_pct / 100)
+    strategy.close('Buy')
+
+// プロット
+plot(basis, 'Basis', color=color.new(color.blue, 0))
+p1 = plot(upper, 'Upper', color=color.new(color.green, 0))
+p2 = plot(lower, 'Lower', color=color.new(color.red, 0))
+fill(p1, p2, color=color.new(color.green, 90))
